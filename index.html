@@ -50,6 +50,8 @@
     .container {
       display: flex;
       justify-content: center;
+      align-items: flex-start;
+      gap: 24px;
       padding: 30px;
     }
 
@@ -70,6 +72,36 @@
       top: 0;
       left: 0;
       pointer-events: none;
+    }
+
+    .angle-panel {
+      width: 220px;
+      min-height: 110px;
+      background: white;
+      border: 1px solid #dde3ea;
+      border-radius: 10px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+      padding: 14px;
+    }
+
+    .angle-label {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #6d7885;
+      margin-bottom: 8px;
+    }
+
+    .angle-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #1b2b3b;
+      margin-bottom: 4px;
+    }
+
+    .angle-note {
+      font-size: 13px;
+      color: #5f6d7b;
     }
 
     /* MODEL LOADING OVERLAY */
@@ -121,6 +153,11 @@
     <video id="video" controls></video>
     <canvas id="overlay"></canvas>
   </div>
+  <div class="angle-panel">
+    <div class="angle-label">Alignment Angle</div>
+    <div id="angleValue" class="angle-value">--°</div>
+    <div class="angle-note">Measured from ankle midpoint reference line.</div>
+  </div>
 </div>
 
 <script>
@@ -133,6 +170,7 @@ const video = document.getElementById("video");
 const overlay = document.getElementById("overlay");
 const ctx = overlay.getContext("2d");
 const exportBtn = document.getElementById("exportBtn");
+const angleValueEl = document.getElementById("angleValue");
 
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingText = document.getElementById("loadingText");
@@ -183,6 +221,10 @@ function calculateAngle(A,B,C) {
   if(magBA===0 || magBC===0) return 0;
   const cos = dot/(magBA*magBC);
   return Math.acos(Math.min(1,Math.max(-1,cos))) * 180/Math.PI;
+}
+
+function updateAngleDisplay(value) {
+  angleValueEl.innerText = Number.isFinite(value) ? `${value.toFixed(1)}°` : "--°";
 }
 
 async function drawOverlay(targetCtx, fullResolution=false) {
@@ -259,6 +301,47 @@ async function drawOverlay(targetCtx, fullResolution=false) {
     targetCtx.fillStyle="red";
     targetCtx.fill();
   });
+
+  const leftAnkle = pts.left_ankle;
+  const rightAnkle = pts.right_ankle;
+
+  if (leftAnkle && rightAnkle) {
+    const ankleMidpoint = {
+      x: (leftAnkle.x + rightAnkle.x) / 2,
+      y: (leftAnkle.y + rightAnkle.y) / 2
+    };
+
+    const referenceTop = {
+      x: ankleMidpoint.x,
+      y: ankleMidpoint.y - 140
+    };
+
+    targetCtx.beginPath();
+    targetCtx.setLineDash([8, 6]);
+    targetCtx.moveTo(ankleMidpoint.x, ankleMidpoint.y);
+    targetCtx.lineTo(referenceTop.x, referenceTop.y);
+    targetCtx.strokeStyle = "#1e78ff";
+    targetCtx.lineWidth = 3;
+    targetCtx.stroke();
+    targetCtx.setLineDash([]);
+
+    const leftHip = pts.left_hip;
+    const rightHip = pts.right_hip;
+
+    if (leftHip && rightHip) {
+      const hipMidpoint = {
+        x: (leftHip.x + rightHip.x) / 2,
+        y: (leftHip.y + rightHip.y) / 2
+      };
+
+      const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
+      updateAngleDisplay(alignmentAngle);
+    } else {
+      updateAngleDisplay(NaN);
+    }
+  } else {
+    updateAngleDisplay(NaN);
+  }
 }
 
 
