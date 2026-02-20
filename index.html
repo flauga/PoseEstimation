@@ -111,6 +111,7 @@
       color: #5f6d7b;
     }
 
+    /* MODEL LOADING OVERLAY */
     #loadingOverlay {
       position: fixed;
       inset: 0;
@@ -189,7 +190,6 @@ const overlay = document.getElementById("overlay");
 const ctx = overlay.getContext("2d");
 const exportBtn = document.getElementById("exportBtn");
 const angleValueEl = document.getElementById("angleValue");
-const processingStatus = document.getElementById("processingStatus");
 
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingText = document.getElementById("loadingText");
@@ -238,6 +238,11 @@ function calculateAngle(A,B,C) {
 function updateAngleDisplay(value) {
   angleValueEl.innerText = Number.isFinite(value) ? `${value.toFixed(1)}°` : "--°";
 }
+
+async function drawOverlay(targetCtx, fullResolution=false) {
+
+  const poses = await detector.estimatePoses(video);
+  if (!poses.length) return;
 
 function getFrameIndex(timeSec) {
   if (!processedFrames.length) return -1;
@@ -319,43 +324,43 @@ function drawOverlayFromFrame(targetCtx, framePts, fullResolution=false) {
   const leftAnkle = pts.left_ankle;
   const rightAnkle = pts.right_ankle;
 
-  if (!leftAnkle || !rightAnkle) {
+  if (leftAnkle && rightAnkle) {
+    const ankleMidpoint = {
+      x: (leftAnkle.x + rightAnkle.x) / 2,
+      y: (leftAnkle.y + rightAnkle.y) / 2
+    };
+
+    const referenceTop = {
+      x: ankleMidpoint.x,
+      y: ankleMidpoint.y - 140
+    };
+
+    targetCtx.beginPath();
+    targetCtx.setLineDash([8, 6]);
+    targetCtx.moveTo(ankleMidpoint.x, ankleMidpoint.y);
+    targetCtx.lineTo(referenceTop.x, referenceTop.y);
+    targetCtx.strokeStyle = "#1e78ff";
+    targetCtx.lineWidth = 3;
+    targetCtx.stroke();
+    targetCtx.setLineDash([]);
+
+    const leftHip = pts.left_hip;
+    const rightHip = pts.right_hip;
+
+    if (leftHip && rightHip) {
+      const hipMidpoint = {
+        x: (leftHip.x + rightHip.x) / 2,
+        y: (leftHip.y + rightHip.y) / 2
+      };
+
+      const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
+      updateAngleDisplay(alignmentAngle);
+    } else {
+      updateAngleDisplay(NaN);
+    }
+  } else {
     updateAngleDisplay(NaN);
-    return;
   }
-
-  const ankleMidpoint = {
-    x: (leftAnkle.x + rightAnkle.x) / 2,
-    y: (leftAnkle.y + rightAnkle.y) / 2
-  };
-
-  const topY = bounds.offsetY;
-  const bottomY = bounds.offsetY + bounds.renderHeight;
-  const referenceTop = { x: ankleMidpoint.x, y: topY };
-
-  targetCtx.beginPath();
-  targetCtx.setLineDash([8, 6]);
-  targetCtx.moveTo(ankleMidpoint.x, topY);
-  targetCtx.lineTo(ankleMidpoint.x, bottomY);
-  targetCtx.strokeStyle = "#1e78ff";
-  targetCtx.lineWidth = 3;
-  targetCtx.stroke();
-  targetCtx.setLineDash([]);
-
-  const leftHip = pts.left_hip;
-  const rightHip = pts.right_hip;
-  if (!leftHip || !rightHip) {
-    updateAngleDisplay(NaN);
-    return;
-  }
-
-  const hipMidpoint = {
-    x: (leftHip.x + rightHip.x) / 2,
-    y: (leftHip.y + rightHip.y) / 2
-  };
-
-  const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
-  updateAngleDisplay(alignmentAngle);
 }
 
 function seekVideo(timeSec) {
