@@ -29,6 +29,7 @@
       display: flex;
       gap: 20px;
       align-items: center;
+      flex-wrap: wrap;
     }
 
     button {
@@ -47,9 +48,17 @@
       cursor: not-allowed;
     }
 
+    #processingStatus {
+      font-size: 14px;
+      color: #44515f;
+      min-height: 20px;
+    }
+
     .container {
       display: flex;
       justify-content: center;
+      align-items: flex-start;
+      gap: 24px;
       padding: 30px;
     }
 
@@ -72,7 +81,36 @@
       pointer-events: none;
     }
 
-    /* MODEL LOADING OVERLAY */
+    .angle-panel {
+      width: 220px;
+      min-height: 110px;
+      background: white;
+      border: 1px solid #dde3ea;
+      border-radius: 10px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+      padding: 14px;
+    }
+
+    .angle-label {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #6d7885;
+      margin-bottom: 8px;
+    }
+
+    .angle-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #1b2b3b;
+      margin-bottom: 4px;
+    }
+
+    .angle-note {
+      font-size: 13px;
+      color: #5f6d7b;
+    }
+
     #loadingOverlay {
       position: fixed;
       inset: 0;
@@ -114,12 +152,18 @@
 <div class="upload-section">
   <input type="file" id="videoUpload" accept="video/*" />
   <button id="exportBtn">Download Annotated Video</button>
+  <div id="processingStatus"></div>
 </div>
 
 <div class="container">
   <div class="video-wrapper">
     <video id="video" controls></video>
     <canvas id="overlay"></canvas>
+  </div>
+  <div class="angle-panel">
+    <div class="angle-label">Alignment Angle</div>
+    <div id="angleValue" class="angle-value">--°</div>
+    <div class="angle-note">Measured from ankle midpoint reference line.</div>
   </div>
 </div>
 
@@ -128,16 +172,28 @@
 let detector;
 let animationId = null;
 let isExporting = false;
+let isProcessing = false;
+
+const processedFps = 30;
+let processedFrames = [];
+
+const KEYPOINT_NAMES = [
+  "nose","left_eye","right_eye","left_ear","right_ear",
+  "left_shoulder","right_shoulder","left_elbow","right_elbow",
+  "left_wrist","right_wrist","left_hip","right_hip",
+  "left_knee","right_knee","left_ankle","right_ankle"
+];
 
 const video = document.getElementById("video");
 const overlay = document.getElementById("overlay");
 const ctx = overlay.getContext("2d");
 const exportBtn = document.getElementById("exportBtn");
+const angleValueEl = document.getElementById("angleValue");
+const processingStatus = document.getElementById("processingStatus");
 
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingText = document.getElementById("loadingText");
 
-// Skeleton
 const skeleton = [
   ["left_shoulder","left_elbow"],
   ["left_elbow","left_wrist"],
@@ -154,7 +210,6 @@ const skeleton = [
 ];
 
 async function loadModel() {
-
   loadingText.innerText = "Loading MoveNet Thunder...";
 
   detector = await poseDetection.createDetector(
@@ -163,15 +218,10 @@ async function loadModel() {
   );
 
   loadingText.innerText = "Model Ready ✔";
-
-  setTimeout(()=>{
+  setTimeout(() => {
     loadingOverlay.style.opacity = 0;
-    setTimeout(()=>{
-      loadingOverlay.style.display = "none";
-    }, 400);
-  }, 800);
-
-  console.log("Model Loaded ✔");
+    setTimeout(() => { loadingOverlay.style.display = "none"; }, 400);
+  }, 700);
 }
 
 function calculateAngle(A,B,C) {
@@ -180,68 +230,75 @@ function calculateAngle(A,B,C) {
   const dot = BA.x*BC.x + BA.y*BC.y;
   const magBA = Math.hypot(BA.x,BA.y);
   const magBC = Math.hypot(BC.x,BC.y);
-  if(magBA===0 || magBC===0) return 0;
+  if(magBA===0 || magBC===0) return NaN;
   const cos = dot/(magBA*magBC);
   return Math.acos(Math.min(1,Math.max(-1,cos))) * 180/Math.PI;
 }
 
-async function drawOverlay(targetCtx, fullResolution=false) {
+function updateAngleDisplay(value) {
+  angleValueEl.innerText = Number.isFinite(value) ? `${value.toFixed(1)}°` : "--°";
+}
 
-  const poses = await detector.estimatePoses(video);
-  if (!poses.length) return;
+function getFrameIndex(timeSec) {
+  if (!processedFrames.length) return -1;
+  const idx = Math.round(timeSec * processedFps);
+  return Math.max(0, Math.min(processedFrames.length - 1, idx));
+}
 
-  const pts = {};
-
+function getRenderBounds(fullResolution) {
   if (fullResolution) {
-    // EXPORT MODE (no scaling needed)
-    poses[0].keypoints.forEach(p=>{
-      if(p.score > 0.4){
-        pts[p.name] = { x: p.x, y: p.y };
-      }
-    });
-  } else {
-    // VIEWER MODE (handle portrait letterboxing properly)
-
-    const videoWidth = video.videoWidth;
-    const videoHeight = video.videoHeight;
-
-    const elementWidth = video.clientWidth;
-    const elementHeight = video.clientHeight;
-
-    const videoAspect = videoWidth / videoHeight;
-    const elementAspect = elementWidth / elementHeight;
-
-    let renderWidth, renderHeight;
-    let offsetX = 0, offsetY = 0;
-
-    if (videoAspect > elementAspect) {
-      // Letterbox top/bottom
-      renderWidth = elementWidth;
-      renderHeight = elementWidth / videoAspect;
-      offsetY = (elementHeight - renderHeight) / 2;
-    } else {
-      // Letterbox left/right
-      renderHeight = elementHeight;
-      renderWidth = elementHeight * videoAspect;
-      offsetX = (elementWidth - renderWidth) / 2;
-    }
-
-    poses[0].keypoints.forEach(p=>{
-      if(p.score > 0.4){
-
-        const x =
-          (p.x / videoWidth) * renderWidth + offsetX;
-
-        const y =
-          (p.y / videoHeight) * renderHeight + offsetY;
-
-        pts[p.name] = { x, y };
-      }
-    });
+    return {
+      offsetX: 0,
+      offsetY: 0,
+      renderWidth: video.videoWidth,
+      renderHeight: video.videoHeight
+    };
   }
 
-  // Skeleton
-  skeleton.forEach(([a,b])=>{
+  const videoWidth = video.videoWidth;
+  const videoHeight = video.videoHeight;
+  const elementWidth = video.clientWidth;
+  const elementHeight = video.clientHeight;
+  const videoAspect = videoWidth / videoHeight;
+  const elementAspect = elementWidth / elementHeight;
+
+  let renderWidth, renderHeight;
+  let offsetX = 0, offsetY = 0;
+
+  if (videoAspect > elementAspect) {
+    renderWidth = elementWidth;
+    renderHeight = elementWidth / videoAspect;
+    offsetY = (elementHeight - renderHeight) / 2;
+  } else {
+    renderHeight = elementHeight;
+    renderWidth = elementHeight * videoAspect;
+    offsetX = (elementWidth - renderWidth) / 2;
+  }
+
+  return { offsetX, offsetY, renderWidth, renderHeight };
+}
+
+function mapToCanvas(framePts, bounds) {
+  const mapped = {};
+  Object.entries(framePts).forEach(([name, p]) => {
+    mapped[name] = {
+      x: (p.x / video.videoWidth) * bounds.renderWidth + bounds.offsetX,
+      y: (p.y / video.videoHeight) * bounds.renderHeight + bounds.offsetY
+    };
+  });
+  return mapped;
+}
+
+function drawOverlayFromFrame(targetCtx, framePts, fullResolution=false) {
+  if (!framePts) {
+    updateAngleDisplay(NaN);
+    return;
+  }
+
+  const bounds = getRenderBounds(fullResolution);
+  const pts = fullResolution ? framePts : mapToCanvas(framePts, bounds);
+
+  skeleton.forEach(([a,b]) => {
     if(pts[a] && pts[b]){
       targetCtx.beginPath();
       targetCtx.moveTo(pts[a].x,pts[a].y);
@@ -252,56 +309,240 @@ async function drawOverlay(targetCtx, fullResolution=false) {
     }
   });
 
-  // Joints
-  Object.values(pts).forEach(p=>{
+  Object.values(pts).forEach(p => {
     targetCtx.beginPath();
     targetCtx.arc(p.x,p.y,5,0,2*Math.PI);
     targetCtx.fillStyle="red";
     targetCtx.fill();
   });
+
+  const leftAnkle = pts.left_ankle;
+  const rightAnkle = pts.right_ankle;
+
+  if (!leftAnkle || !rightAnkle) {
+    updateAngleDisplay(NaN);
+    return;
+  }
+
+  const ankleMidpoint = {
+    x: (leftAnkle.x + rightAnkle.x) / 2,
+    y: (leftAnkle.y + rightAnkle.y) / 2
+  };
+
+  const topY = bounds.offsetY;
+  const bottomY = bounds.offsetY + bounds.renderHeight;
+  const referenceTop = { x: ankleMidpoint.x, y: topY };
+
+  targetCtx.beginPath();
+  targetCtx.setLineDash([8, 6]);
+  targetCtx.moveTo(ankleMidpoint.x, topY);
+  targetCtx.lineTo(ankleMidpoint.x, bottomY);
+  targetCtx.strokeStyle = "#1e78ff";
+  targetCtx.lineWidth = 3;
+  targetCtx.stroke();
+  targetCtx.setLineDash([]);
+
+  const leftHip = pts.left_hip;
+  const rightHip = pts.right_hip;
+  if (!leftHip || !rightHip) {
+    updateAngleDisplay(NaN);
+    return;
+  }
+
+  const hipMidpoint = {
+    x: (leftHip.x + rightHip.x) / 2,
+    y: (leftHip.y + rightHip.y) / 2
+  };
+
+  const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
+  updateAngleDisplay(alignmentAngle);
 }
 
+function seekVideo(timeSec) {
+  return new Promise(resolve => {
+    const onSeeked = () => {
+      video.removeEventListener("seeked", onSeeked);
+      resolve();
+    };
+    video.addEventListener("seeked", onSeeked);
+    video.currentTime = timeSec;
+  });
+}
 
-// Real-time loop
+function fillMissingValues(values) {
+  const out = [...values];
+  let firstValid = out.findIndex(v => Number.isFinite(v));
+  if (firstValid === -1) return null;
+
+  for (let i = 0; i < firstValid; i++) out[i] = out[firstValid];
+
+  let lastValid = firstValid;
+  for (let i = firstValid + 1; i < out.length; i++) {
+    if (Number.isFinite(out[i])) {
+      const gap = i - lastValid;
+      const start = out[lastValid];
+      const end = out[i];
+      for (let j = 1; j < gap; j++) {
+        out[lastValid + j] = start + (end - start) * (j / gap);
+      }
+      lastValid = i;
+    }
+  }
+
+  for (let i = lastValid + 1; i < out.length; i++) out[i] = out[lastValid];
+  return out;
+}
+
+function applyIIRBiquad(data, b, a) {
+  const y = new Array(data.length).fill(0);
+  for (let n = 0; n < data.length; n++) {
+    const x0 = data[n];
+    const x1 = n > 0 ? data[n - 1] : data[n];
+    const x2 = n > 1 ? data[n - 2] : data[n];
+    const y1 = n > 0 ? y[n - 1] : data[n];
+    const y2 = n > 1 ? y[n - 2] : data[n];
+    y[n] = b[0] * x0 + b[1] * x1 + b[2] * x2 - a[1] * y1 - a[2] * y2;
+  }
+  return y;
+}
+
+function butterworthZeroLag(values, cutoffHz, fps) {
+  const filled = fillMissingValues(values);
+  if (!filled) return values;
+
+  const omega = Math.tan(Math.PI * cutoffHz / fps);
+  const omega2 = omega * omega;
+  const sqrt2 = Math.SQRT2;
+
+  const a0 = 1 + sqrt2 * omega + omega2;
+  const b = [omega2 / a0, (2 * omega2) / a0, omega2 / a0];
+  const a = [1, (2 * (omega2 - 1)) / a0, (1 - sqrt2 * omega + omega2) / a0];
+
+  const forward = applyIIRBiquad(filled, b, a);
+  const backward = applyIIRBiquad([...forward].reverse(), b, a).reverse();
+  return backward;
+}
+
+function applyZeroLagButterworth(rawFrames) {
+  const frameCount = rawFrames.length;
+  const filteredFrames = Array.from({ length: frameCount }, () => ({}));
+
+  KEYPOINT_NAMES.forEach(name => {
+    const xSeries = rawFrames.map(frame => frame[name]?.x ?? NaN);
+    const ySeries = rawFrames.map(frame => frame[name]?.y ?? NaN);
+
+    const fx = butterworthZeroLag(xSeries, 4, processedFps);
+    const fy = butterworthZeroLag(ySeries, 4, processedFps);
+
+    for (let i = 0; i < frameCount; i++) {
+      if (Number.isFinite(fx[i]) && Number.isFinite(fy[i])) {
+        filteredFrames[i][name] = { x: fx[i], y: fy[i] };
+      }
+    }
+  });
+
+  return filteredFrames;
+}
+
+async function preprocessCurrentVideo() {
+  if (!video.src || isProcessing) return;
+
+  isProcessing = true;
+  processedFrames = [];
+  exportBtn.disabled = true;
+  updateAngleDisplay(NaN);
+
+  video.pause();
+  const duration = video.duration;
+  const frameCount = Math.max(1, Math.ceil(duration * processedFps));
+
+  processingStatus.innerText = `Processing video (0/${frameCount})...`;
+
+  const rawFrames = [];
+  for (let i = 0; i < frameCount; i++) {
+    const targetTime = Math.min(i / processedFps, Math.max(0, duration - (1 / processedFps)));
+    await seekVideo(targetTime);
+
+    const poses = await detector.estimatePoses(video);
+    const frame = {};
+    if (poses.length) {
+      poses[0].keypoints.forEach(p => {
+        if (p.score > 0.4) {
+          frame[p.name] = { x: p.x, y: p.y };
+        }
+      });
+    }
+    rawFrames.push(frame);
+
+    if (i % 10 === 0 || i === frameCount - 1) {
+      processingStatus.innerText = `Processing video (${i + 1}/${frameCount})...`;
+    }
+  }
+
+  processingStatus.innerText = "Applying zero-lag Butterworth filter...";
+  processedFrames = applyZeroLagButterworth(rawFrames);
+
+  await seekVideo(0);
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  drawOverlayFromFrame(ctx, processedFrames[0], false);
+
+  processingStatus.innerText = `Processing complete (${frameCount} frames).`;
+  exportBtn.disabled = false;
+  isProcessing = false;
+}
+
 async function viewerLoop() {
-
-  if(video.paused || video.ended){
+  if(video.paused || video.ended || isProcessing){
     animationId = null;
     return;
   }
 
+  const frame = processedFrames[getFrameIndex(video.currentTime)];
   ctx.clearRect(0,0,overlay.width,overlay.height);
-  await drawOverlay(ctx,false);
+  drawOverlayFromFrame(ctx, frame, false);
 
   animationId = requestAnimationFrame(viewerLoop);
 }
 
-video.addEventListener("play", ()=>{
+video.addEventListener("play", () => {
+  if (!processedFrames.length || isProcessing) {
+    video.pause();
+    return;
+  }
+
   if(!animationId)
     animationId = requestAnimationFrame(viewerLoop);
 });
 
-video.addEventListener("seeked", async ()=>{
-  if(video.paused){
+video.addEventListener("seeked", () => {
+  if(video.paused && processedFrames.length && !isProcessing){
+    const frame = processedFrames[getFrameIndex(video.currentTime)];
     ctx.clearRect(0,0,overlay.width,overlay.height);
-    await drawOverlay(ctx,false);
+    drawOverlayFromFrame(ctx, frame, false);
   }
 });
 
-video.addEventListener("loadedmetadata",()=>{
+video.addEventListener("loadedmetadata", () => {
   overlay.width = video.clientWidth;
   overlay.height = video.clientHeight;
 });
 
-document.getElementById("videoUpload")
-.addEventListener("change",e=>{
-  video.src = URL.createObjectURL(e.target.files[0]);
+document.getElementById("videoUpload").addEventListener("change", async e => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  processedFrames = [];
+  processingStatus.innerText = "Loading video...";
+  video.src = URL.createObjectURL(file);
+
+  await new Promise(resolve => video.addEventListener("loadedmetadata", resolve, { once: true }));
+  overlay.width = video.clientWidth;
+  overlay.height = video.clientHeight;
+  await preprocessCurrentVideo();
 });
 
-// EXPORT LOGIC
 exportBtn.addEventListener("click", async () => {
-
-  if(!video.src || isExporting) return;
+  if(!video.src || isExporting || isProcessing || !processedFrames.length) return;
 
   isExporting = true;
   exportBtn.disabled = true;
@@ -312,16 +553,15 @@ exportBtn.addEventListener("click", async () => {
   exportCanvas.height = video.videoHeight;
   const exportCtx = exportCanvas.getContext("2d");
 
-  const stream = exportCanvas.captureStream(30);
+  const stream = exportCanvas.captureStream(processedFps);
   const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
-
   const chunks = [];
 
-  recorder.ondataavailable = e=>{
+  recorder.ondataavailable = e => {
     if(e.data.size>0) chunks.push(e.data);
   };
 
-  recorder.onstop = ()=>{
+  recorder.onstop = () => {
     const blob = new Blob(chunks,{type:"video/webm"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -330,32 +570,26 @@ exportBtn.addEventListener("click", async () => {
     a.click();
 
     exportBtn.innerText = "Done ✔";
-    setTimeout(()=>{
+    setTimeout(() => {
       exportBtn.innerText = "Download Annotated Video";
       exportBtn.disabled = false;
       isExporting = false;
-    },2000);
+    }, 2000);
   };
 
   recorder.start();
 
-  video.currentTime = 0;
-  await video.play();
+  for (let i = 0; i < processedFrames.length; i++) {
+    const targetTime = Math.min(i / processedFps, Math.max(0, video.duration - (1 / processedFps)));
+    await seekVideo(targetTime);
 
-  const exportLoop = async ()=>{
-
-    if(video.paused || video.ended){
-      recorder.stop();
-      return;
-    }
-
+    exportCtx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
     exportCtx.drawImage(video,0,0);
-    await drawOverlay(exportCtx,true);
+    drawOverlayFromFrame(exportCtx, processedFrames[i], true);
+    await new Promise(resolve => setTimeout(resolve, 1000 / processedFps));
+  }
 
-    requestAnimationFrame(exportLoop);
-  };
-
-  exportLoop();
+  recorder.stop();
 });
 
 loadModel();
