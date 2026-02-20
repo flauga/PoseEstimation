@@ -222,6 +222,8 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
     new Promise((_, reject) => setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs))
   ]);
 }
+async function loadModel() {
+  loadingText.innerText = "Loading MoveNet Thunder...";
 
 async function createDetectorWithFallback(modelType, backendName) {
   await tf.setBackend(backendName);
@@ -270,6 +272,11 @@ async function loadModel() {
   processingStatus.innerText = "Unable to initialize model. Check network/browser WebGL support.";
   setTimeout(hideLoadingOverlay, 600);
   console.error("Model loading failed", lastError);
+  loadingText.innerText = "Model Ready ✔";
+  setTimeout(() => {
+    loadingOverlay.style.opacity = 0;
+    setTimeout(() => { loadingOverlay.style.display = "none"; }, 400);
+  }, 700);
 }
 
 function calculateAngle(A,B,C) {
@@ -287,6 +294,11 @@ function updateAngleDisplay(value) {
   angleValueEl.innerText = Number.isFinite(value) ? `${value.toFixed(1)}°` : "--°";
 }
 
+async function drawOverlay(targetCtx, fullResolution=false) {
+
+  const poses = await detector.estimatePoses(video);
+  if (!poses.length) return;
+
 function getFrameIndex(timeSec) {
   if (!processedFrames.length) return -1;
   const idx = Math.round(timeSec * processedFps);
@@ -302,6 +314,41 @@ function getRenderBounds(fullResolution) {
       renderHeight: video.videoHeight
     };
   }
+
+  const videoWidth = video.videoWidth;
+  const videoHeight = video.videoHeight;
+  const elementWidth = video.clientWidth;
+  const elementHeight = video.clientHeight;
+  const videoAspect = videoWidth / videoHeight;
+  const elementAspect = elementWidth / elementHeight;
+
+  let renderWidth, renderHeight;
+  let offsetX = 0, offsetY = 0;
+
+  if (videoAspect > elementAspect) {
+    renderWidth = elementWidth;
+    renderHeight = elementWidth / videoAspect;
+    offsetY = (elementHeight - renderHeight) / 2;
+  } else {
+    renderHeight = elementHeight;
+    renderWidth = elementHeight * videoAspect;
+    offsetX = (elementWidth - renderWidth) / 2;
+  }
+
+  return { offsetX, offsetY, renderWidth, renderHeight };
+}
+
+function mapToCanvas(framePts, bounds) {
+  const mapped = {};
+  Object.entries(framePts).forEach(([name, p]) => {
+    mapped[name] = {
+      x: (p.x / video.videoWidth) * bounds.renderWidth + bounds.offsetX,
+      y: (p.y / video.videoHeight) * bounds.renderHeight + bounds.offsetY
+    };
+  });
+  return mapped;
+}
+
 
   const videoWidth = video.videoWidth;
   const videoHeight = video.videoHeight;
@@ -437,6 +484,76 @@ function fillMissingValues(values) {
     }
   }
 
+  if (leftAnkle && rightAnkle) {
+    const ankleMidpoint = {
+      x: (leftAnkle.x + rightAnkle.x) / 2,
+      y: (leftAnkle.y + rightAnkle.y) / 2
+    };
+
+    const referenceTop = {
+      x: ankleMidpoint.x,
+      y: ankleMidpoint.y - 140
+    };
+
+    targetCtx.beginPath();
+    targetCtx.setLineDash([8, 6]);
+    targetCtx.moveTo(ankleMidpoint.x, ankleMidpoint.y);
+    targetCtx.lineTo(referenceTop.x, referenceTop.y);
+    targetCtx.strokeStyle = "#1e78ff";
+    targetCtx.lineWidth = 3;
+    targetCtx.stroke();
+    targetCtx.setLineDash([]);
+
+    const leftHip = pts.left_hip;
+    const rightHip = pts.right_hip;
+
+    if (leftHip && rightHip) {
+      const hipMidpoint = {
+        x: (leftHip.x + rightHip.x) / 2,
+        y: (leftHip.y + rightHip.y) / 2
+      };
+
+      const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
+      updateAngleDisplay(alignmentAngle);
+    } else {
+      updateAngleDisplay(NaN);
+    }
+  } else {
+    updateAngleDisplay(NaN);
+  }
+}
+
+function seekVideo(timeSec) {
+  return new Promise(resolve => {
+    const onSeeked = () => {
+      video.removeEventListener("seeked", onSeeked);
+      resolve();
+    };
+    video.addEventListener("seeked", onSeeked);
+    video.currentTime = timeSec;
+  });
+}
+
+function fillMissingValues(values) {
+  const out = [...values];
+  let firstValid = out.findIndex(v => Number.isFinite(v));
+  if (firstValid === -1) return null;
+
+  for (let i = 0; i < firstValid; i++) out[i] = out[firstValid];
+
+  let lastValid = firstValid;
+  for (let i = firstValid + 1; i < out.length; i++) {
+    if (Number.isFinite(out[i])) {
+      const gap = i - lastValid;
+      const start = out[lastValid];
+      const end = out[i];
+      for (let j = 1; j < gap; j++) {
+        out[lastValid + j] = start + (end - start) * (j / gap);
+      }
+      lastValid = i;
+    }
+  }
+
   for (let i = lastValid + 1; i < out.length; i++) out[i] = out[lastValid];
   return out;
 }
@@ -522,6 +639,63 @@ async function preprocessCurrentVideo() {
     }
     rawFrames.push(frame);
 
+
+  const forward = applyIIRBiquad(filled, b, a);
+  const backward = applyIIRBiquad([...forward].reverse(), b, a).reverse();
+  return backward;
+}
+
+function applyZeroLagButterworth(rawFrames) {
+  const frameCount = rawFrames.length;
+  const filteredFrames = Array.from({ length: frameCount }, () => ({}));
+
+  KEYPOINT_NAMES.forEach(name => {
+    const xSeries = rawFrames.map(frame => frame[name]?.x ?? NaN);
+    const ySeries = rawFrames.map(frame => frame[name]?.y ?? NaN);
+
+    const fx = butterworthZeroLag(xSeries, 4, processedFps);
+    const fy = butterworthZeroLag(ySeries, 4, processedFps);
+
+    for (let i = 0; i < frameCount; i++) {
+      if (Number.isFinite(fx[i]) && Number.isFinite(fy[i])) {
+        filteredFrames[i][name] = { x: fx[i], y: fy[i] };
+      }
+    }
+  });
+
+  return filteredFrames;
+}
+
+async function preprocessCurrentVideo() {
+  if (!video.src || isProcessing) return;
+
+  isProcessing = true;
+  processedFrames = [];
+  exportBtn.disabled = true;
+  updateAngleDisplay(NaN);
+
+  video.pause();
+  const duration = video.duration;
+  const frameCount = Math.max(1, Math.ceil(duration * processedFps));
+
+  processingStatus.innerText = `Processing video (0/${frameCount})...`;
+
+  const rawFrames = [];
+  for (let i = 0; i < frameCount; i++) {
+    const targetTime = Math.min(i / processedFps, Math.max(0, duration - (1 / processedFps)));
+    await seekVideo(targetTime);
+
+    const poses = await detector.estimatePoses(video);
+    const frame = {};
+    if (poses.length) {
+      poses[0].keypoints.forEach(p => {
+        if (p.score > 0.4) {
+          frame[p.name] = { x: p.x, y: p.y };
+        }
+      });
+    }
+    rawFrames.push(frame);
+
     if (i % 10 === 0 || i === frameCount - 1) {
       processingStatus.innerText = `Processing video (${i + 1}/${frameCount})...`;
     }
@@ -576,6 +750,7 @@ video.addEventListener("loadedmetadata", () => {
 });
 
 videoUpload.addEventListener("change", async e => {
+document.getElementById("videoUpload").addEventListener("change", async e => {
   const file = e.target.files?.[0];
   if (!file) return;
 
