@@ -111,7 +111,6 @@
       color: #5f6d7b;
     }
 
-    /* MODEL LOADING OVERLAY */
     #loadingOverlay {
       position: fixed;
       inset: 0;
@@ -174,6 +173,7 @@ let detector;
 let animationId = null;
 let isExporting = false;
 let isProcessing = false;
+let isModelReady = false;
 
 const processedFps = 30;
 let processedFrames = [];
@@ -190,6 +190,8 @@ const overlay = document.getElementById("overlay");
 const ctx = overlay.getContext("2d");
 const exportBtn = document.getElementById("exportBtn");
 const angleValueEl = document.getElementById("angleValue");
+const processingStatus = document.getElementById("processingStatus");
+const videoUpload = document.getElementById("videoUpload");
 
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingText = document.getElementById("loadingText");
@@ -209,14 +211,67 @@ const skeleton = [
   ["right_knee","right_ankle"]
 ];
 
+function hideLoadingOverlay() {
+  loadingOverlay.style.opacity = 0;
+  setTimeout(() => { loadingOverlay.style.display = "none"; }, 400);
+}
+
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs))
+  ]);
+}
 async function loadModel() {
   loadingText.innerText = "Loading MoveNet Thunder...";
 
-  detector = await poseDetection.createDetector(
-    poseDetection.SupportedModels.MoveNet,
-    { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
-  );
+async function createDetectorWithFallback(modelType, backendName) {
+  await tf.setBackend(backendName);
+  await tf.ready();
 
+  return withTimeout(
+    poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      { modelType }
+    ),
+    35000,
+    `${modelType} on ${backendName} timed out`
+  );
+}
+
+async function loadModel() {
+  videoUpload.disabled = true;
+  processingStatus.innerText = "Initializing pose model...";
+
+  const modelCandidates = [
+    poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+    poseDetection.movenet.modelType.SINGLEPOSE_THUNDER
+  ];
+  const backendCandidates = ["webgl", "wasm", "cpu"];
+
+  let lastError;
+
+  for (const modelType of modelCandidates) {
+    for (const backendName of backendCandidates) {
+      try {
+        loadingText.innerText = `Loading ${modelType.replace("SINGLEPOSE_", "")} (${backendName})...`;
+        detector = await createDetectorWithFallback(modelType, backendName);
+        isModelReady = true;
+        videoUpload.disabled = false;
+        loadingText.innerText = `Model Ready ✔ (${modelType.replace("SINGLEPOSE_", "")}, ${backendName})`;
+        processingStatus.innerText = "Model loaded. Upload a video to preprocess.";
+        setTimeout(hideLoadingOverlay, 600);
+        return;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+  }
+
+  loadingText.innerText = "Model failed to load. Refresh and retry.";
+  processingStatus.innerText = "Unable to initialize model. Check network/browser WebGL support.";
+  setTimeout(hideLoadingOverlay, 600);
+  console.error("Model loading failed", lastError);
   loadingText.innerText = "Model Ready ✔";
   setTimeout(() => {
     loadingOverlay.style.opacity = 0;
@@ -294,6 +349,41 @@ function mapToCanvas(framePts, bounds) {
   return mapped;
 }
 
+
+  const videoWidth = video.videoWidth;
+  const videoHeight = video.videoHeight;
+  const elementWidth = video.clientWidth;
+  const elementHeight = video.clientHeight;
+  const videoAspect = videoWidth / videoHeight;
+  const elementAspect = elementWidth / elementHeight;
+
+  let renderWidth, renderHeight;
+  let offsetX = 0, offsetY = 0;
+
+  if (videoAspect > elementAspect) {
+    renderWidth = elementWidth;
+    renderHeight = elementWidth / videoAspect;
+    offsetY = (elementHeight - renderHeight) / 2;
+  } else {
+    renderHeight = elementHeight;
+    renderWidth = elementHeight * videoAspect;
+    offsetX = (elementWidth - renderWidth) / 2;
+  }
+
+  return { offsetX, offsetY, renderWidth, renderHeight };
+}
+
+function mapToCanvas(framePts, bounds) {
+  const mapped = {};
+  Object.entries(framePts).forEach(([name, p]) => {
+    mapped[name] = {
+      x: (p.x / video.videoWidth) * bounds.renderWidth + bounds.offsetX,
+      y: (p.y / video.videoHeight) * bounds.renderHeight + bounds.offsetY
+    };
+  });
+  return mapped;
+}
+
 function drawOverlayFromFrame(targetCtx, framePts, fullResolution=false) {
   if (!framePts) {
     updateAngleDisplay(NaN);
@@ -323,6 +413,76 @@ function drawOverlayFromFrame(targetCtx, framePts, fullResolution=false) {
 
   const leftAnkle = pts.left_ankle;
   const rightAnkle = pts.right_ankle;
+
+  if (!leftAnkle || !rightAnkle) {
+    updateAngleDisplay(NaN);
+    return;
+  }
+
+  const ankleMidpoint = {
+    x: (leftAnkle.x + rightAnkle.x) / 2,
+    y: (leftAnkle.y + rightAnkle.y) / 2
+  };
+
+  const topY = bounds.offsetY;
+  const bottomY = bounds.offsetY + bounds.renderHeight;
+  const referenceTop = { x: ankleMidpoint.x, y: topY };
+
+  targetCtx.beginPath();
+  targetCtx.setLineDash([8, 6]);
+  targetCtx.moveTo(ankleMidpoint.x, topY);
+  targetCtx.lineTo(ankleMidpoint.x, bottomY);
+  targetCtx.strokeStyle = "#1e78ff";
+  targetCtx.lineWidth = 3;
+  targetCtx.stroke();
+  targetCtx.setLineDash([]);
+
+  const leftHip = pts.left_hip;
+  const rightHip = pts.right_hip;
+  if (!leftHip || !rightHip) {
+    updateAngleDisplay(NaN);
+    return;
+  }
+
+  const hipMidpoint = {
+    x: (leftHip.x + rightHip.x) / 2,
+    y: (leftHip.y + rightHip.y) / 2
+  };
+
+  const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
+  updateAngleDisplay(alignmentAngle);
+}
+
+function seekVideo(timeSec) {
+  return new Promise(resolve => {
+    const onSeeked = () => {
+      video.removeEventListener("seeked", onSeeked);
+      resolve();
+    };
+    video.addEventListener("seeked", onSeeked);
+    video.currentTime = timeSec;
+  });
+}
+
+function fillMissingValues(values) {
+  const out = [...values];
+  let firstValid = out.findIndex(v => Number.isFinite(v));
+  if (firstValid === -1) return null;
+
+  for (let i = 0; i < firstValid; i++) out[i] = out[firstValid];
+
+  let lastValid = firstValid;
+  for (let i = firstValid + 1; i < out.length; i++) {
+    if (Number.isFinite(out[i])) {
+      const gap = i - lastValid;
+      const start = out[lastValid];
+      const end = out[i];
+      for (let j = 1; j < gap; j++) {
+        out[lastValid + j] = start + (end - start) * (j / gap);
+      }
+      lastValid = i;
+    }
+  }
 
   if (leftAnkle && rightAnkle) {
     const ankleMidpoint = {
@@ -450,6 +610,63 @@ function applyZeroLagButterworth(rawFrames) {
 }
 
 async function preprocessCurrentVideo() {
+  if (!video.src || isProcessing || !isModelReady || !detector) return;
+
+  isProcessing = true;
+  processedFrames = [];
+  exportBtn.disabled = true;
+  updateAngleDisplay(NaN);
+
+  video.pause();
+  const duration = video.duration;
+  const frameCount = Math.max(1, Math.ceil(duration * processedFps));
+
+  processingStatus.innerText = `Processing video (0/${frameCount})...`;
+
+  const rawFrames = [];
+  for (let i = 0; i < frameCount; i++) {
+    const targetTime = Math.min(i / processedFps, Math.max(0, duration - (1 / processedFps)));
+    await seekVideo(targetTime);
+
+    const poses = await detector.estimatePoses(video);
+    const frame = {};
+    if (poses.length) {
+      poses[0].keypoints.forEach(p => {
+        if (p.score > 0.4) {
+          frame[p.name] = { x: p.x, y: p.y };
+        }
+      });
+    }
+    rawFrames.push(frame);
+
+
+  const forward = applyIIRBiquad(filled, b, a);
+  const backward = applyIIRBiquad([...forward].reverse(), b, a).reverse();
+  return backward;
+}
+
+function applyZeroLagButterworth(rawFrames) {
+  const frameCount = rawFrames.length;
+  const filteredFrames = Array.from({ length: frameCount }, () => ({}));
+
+  KEYPOINT_NAMES.forEach(name => {
+    const xSeries = rawFrames.map(frame => frame[name]?.x ?? NaN);
+    const ySeries = rawFrames.map(frame => frame[name]?.y ?? NaN);
+
+    const fx = butterworthZeroLag(xSeries, 4, processedFps);
+    const fy = butterworthZeroLag(ySeries, 4, processedFps);
+
+    for (let i = 0; i < frameCount; i++) {
+      if (Number.isFinite(fx[i]) && Number.isFinite(fy[i])) {
+        filteredFrames[i][name] = { x: fx[i], y: fy[i] };
+      }
+    }
+  });
+
+  return filteredFrames;
+}
+
+async function preprocessCurrentVideo() {
   if (!video.src || isProcessing) return;
 
   isProcessing = true;
@@ -532,6 +749,7 @@ video.addEventListener("loadedmetadata", () => {
   overlay.height = video.clientHeight;
 });
 
+videoUpload.addEventListener("change", async e => {
 document.getElementById("videoUpload").addEventListener("change", async e => {
   const file = e.target.files?.[0];
   if (!file) return;
