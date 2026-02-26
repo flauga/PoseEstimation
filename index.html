@@ -192,7 +192,6 @@ const exportBtn = document.getElementById("exportBtn");
 const angleValueEl = document.getElementById("angleValue");
 const processingStatus = document.getElementById("processingStatus");
 const videoUpload = document.getElementById("videoUpload");
-
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingText = document.getElementById("loadingText");
 
@@ -211,72 +210,32 @@ const skeleton = [
   ["right_knee","right_ankle"]
 ];
 
-function hideLoadingOverlay() {
-  loadingOverlay.style.opacity = 0;
-  setTimeout(() => { loadingOverlay.style.display = "none"; }, 400);
-}
-
-function withTimeout(promise, timeoutMs, timeoutMessage) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs))
-  ]);
-}
 async function loadModel() {
-  loadingText.innerText = "Loading MoveNet Thunder...";
+  try {
+    loadingText.innerText = "Initializing backend...";
+    await tf.setBackend("webgl");
+    await tf.ready();
 
-async function createDetectorWithFallback(modelType, backendName) {
-  await tf.setBackend(backendName);
-  await tf.ready();
-
-  return withTimeout(
-    poseDetection.createDetector(
+    loadingText.innerText = "Loading MoveNet Lightning...";
+    detector = await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
-      { modelType }
-    ),
-    35000,
-    `${modelType} on ${backendName} timed out`
-  );
-}
+      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+    );
 
-async function loadModel() {
-  videoUpload.disabled = true;
-  processingStatus.innerText = "Initializing pose model...";
+    isModelReady = true;
+    loadingText.innerText = "Model Ready ✔";
+    processingStatus.innerText = "Upload a video to begin.";
 
-  const modelCandidates = [
-    poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
-    poseDetection.movenet.modelType.SINGLEPOSE_THUNDER
-  ];
-  const backendCandidates = ["webgl", "wasm", "cpu"];
-
-  let lastError;
-
-  for (const modelType of modelCandidates) {
-    for (const backendName of backendCandidates) {
-      try {
-        loadingText.innerText = `Loading ${modelType.replace("SINGLEPOSE_", "")} (${backendName})...`;
-        detector = await createDetectorWithFallback(modelType, backendName);
-        isModelReady = true;
-        videoUpload.disabled = false;
-        loadingText.innerText = `Model Ready ✔ (${modelType.replace("SINGLEPOSE_", "")}, ${backendName})`;
-        processingStatus.innerText = "Model loaded. Upload a video to preprocess.";
-        setTimeout(hideLoadingOverlay, 600);
-        return;
-      } catch (err) {
-        lastError = err;
-      }
-    }
+  } catch (err) {
+    console.error(err);
+    loadingText.innerText = "Model failed to load.";
+    processingStatus.innerText = "Check browser WebGL support.";
   }
 
-  loadingText.innerText = "Model failed to load. Refresh and retry.";
-  processingStatus.innerText = "Unable to initialize model. Check network/browser WebGL support.";
-  setTimeout(hideLoadingOverlay, 600);
-  console.error("Model loading failed", lastError);
-  loadingText.innerText = "Model Ready ✔";
   setTimeout(() => {
     loadingOverlay.style.opacity = 0;
-    setTimeout(() => { loadingOverlay.style.display = "none"; }, 400);
-  }, 700);
+    setTimeout(() => loadingOverlay.style.display = "none", 400);
+  }, 800);
 }
 
 function calculateAngle(A,B,C) {
@@ -291,528 +250,172 @@ function calculateAngle(A,B,C) {
 }
 
 function updateAngleDisplay(value) {
-  angleValueEl.innerText = Number.isFinite(value) ? `${value.toFixed(1)}°` : "--°";
-}
-
-async function drawOverlay(targetCtx, fullResolution=false) {
-
-  const poses = await detector.estimatePoses(video);
-  if (!poses.length) return;
-
-function getFrameIndex(timeSec) {
-  if (!processedFrames.length) return -1;
-  const idx = Math.round(timeSec * processedFps);
-  return Math.max(0, Math.min(processedFrames.length - 1, idx));
-}
-
-function getRenderBounds(fullResolution) {
-  if (fullResolution) {
-    return {
-      offsetX: 0,
-      offsetY: 0,
-      renderWidth: video.videoWidth,
-      renderHeight: video.videoHeight
-    };
-  }
-
-  const videoWidth = video.videoWidth;
-  const videoHeight = video.videoHeight;
-  const elementWidth = video.clientWidth;
-  const elementHeight = video.clientHeight;
-  const videoAspect = videoWidth / videoHeight;
-  const elementAspect = elementWidth / elementHeight;
-
-  let renderWidth, renderHeight;
-  let offsetX = 0, offsetY = 0;
-
-  if (videoAspect > elementAspect) {
-    renderWidth = elementWidth;
-    renderHeight = elementWidth / videoAspect;
-    offsetY = (elementHeight - renderHeight) / 2;
-  } else {
-    renderHeight = elementHeight;
-    renderWidth = elementHeight * videoAspect;
-    offsetX = (elementWidth - renderWidth) / 2;
-  }
-
-  return { offsetX, offsetY, renderWidth, renderHeight };
-}
-
-function mapToCanvas(framePts, bounds) {
-  const mapped = {};
-  Object.entries(framePts).forEach(([name, p]) => {
-    mapped[name] = {
-      x: (p.x / video.videoWidth) * bounds.renderWidth + bounds.offsetX,
-      y: (p.y / video.videoHeight) * bounds.renderHeight + bounds.offsetY
-    };
-  });
-  return mapped;
-}
-
-
-  const videoWidth = video.videoWidth;
-  const videoHeight = video.videoHeight;
-  const elementWidth = video.clientWidth;
-  const elementHeight = video.clientHeight;
-  const videoAspect = videoWidth / videoHeight;
-  const elementAspect = elementWidth / elementHeight;
-
-  let renderWidth, renderHeight;
-  let offsetX = 0, offsetY = 0;
-
-  if (videoAspect > elementAspect) {
-    renderWidth = elementWidth;
-    renderHeight = elementWidth / videoAspect;
-    offsetY = (elementHeight - renderHeight) / 2;
-  } else {
-    renderHeight = elementHeight;
-    renderWidth = elementHeight * videoAspect;
-    offsetX = (elementWidth - renderWidth) / 2;
-  }
-
-  return { offsetX, offsetY, renderWidth, renderHeight };
-}
-
-function mapToCanvas(framePts, bounds) {
-  const mapped = {};
-  Object.entries(framePts).forEach(([name, p]) => {
-    mapped[name] = {
-      x: (p.x / video.videoWidth) * bounds.renderWidth + bounds.offsetX,
-      y: (p.y / video.videoHeight) * bounds.renderHeight + bounds.offsetY
-    };
-  });
-  return mapped;
+  angleValueEl.innerText =
+    Number.isFinite(value) ? `${value.toFixed(1)}°` : "--°";
 }
 
 function drawOverlayFromFrame(targetCtx, framePts, fullResolution=false) {
+
   if (!framePts) {
     updateAngleDisplay(NaN);
     return;
   }
 
-  const bounds = getRenderBounds(fullResolution);
+  const bounds = fullResolution
+    ? {offsetX:0, offsetY:0, renderWidth:video.videoWidth, renderHeight:video.videoHeight}
+    : getRenderBounds();
+
   const pts = fullResolution ? framePts : mapToCanvas(framePts, bounds);
 
-  skeleton.forEach(([a,b]) => {
+  skeleton.forEach(([a,b])=>{
     if(pts[a] && pts[b]){
       targetCtx.beginPath();
       targetCtx.moveTo(pts[a].x,pts[a].y);
       targetCtx.lineTo(pts[b].x,pts[b].y);
       targetCtx.strokeStyle="lime";
-      targetCtx.lineWidth=3;
+      targetCtx.lineWidth=1.5;
       targetCtx.stroke();
     }
   });
 
-  Object.values(pts).forEach(p => {
+  Object.values(pts).forEach(p=>{
     targetCtx.beginPath();
-    targetCtx.arc(p.x,p.y,5,0,2*Math.PI);
+    targetCtx.arc(p.x,p.y,3,0,2*Math.PI);
     targetCtx.fillStyle="red";
     targetCtx.fill();
   });
 
   const leftAnkle = pts.left_ankle;
   const rightAnkle = pts.right_ankle;
+  const leftHip = pts.left_hip;
+  const rightHip = pts.right_hip;
 
-  if (!leftAnkle || !rightAnkle) {
+  if (!leftAnkle || !rightAnkle || !leftHip || !rightHip) {
     updateAngleDisplay(NaN);
     return;
   }
 
-  const ankleMidpoint = {
-    x: (leftAnkle.x + rightAnkle.x) / 2,
-    y: (leftAnkle.y + rightAnkle.y) / 2
+  const ankleMid = {
+    x:(leftAnkle.x+rightAnkle.x)/2,
+    y:(leftAnkle.y+rightAnkle.y)/2
   };
 
-  const topY = bounds.offsetY;
-  const bottomY = bounds.offsetY + bounds.renderHeight;
-  const referenceTop = { x: ankleMidpoint.x, y: topY };
-
   targetCtx.beginPath();
-  targetCtx.setLineDash([8, 6]);
-  targetCtx.moveTo(ankleMidpoint.x, topY);
-  targetCtx.lineTo(ankleMidpoint.x, bottomY);
-  targetCtx.strokeStyle = "#1e78ff";
-  targetCtx.lineWidth = 3;
+  targetCtx.setLineDash([8,6]);
+  targetCtx.moveTo(ankleMid.x, bounds.offsetY);
+  targetCtx.lineTo(ankleMid.x, bounds.offsetY + bounds.renderHeight);
+  targetCtx.strokeStyle="#1e78ff";
+  targetCtx.lineWidth=2;
   targetCtx.stroke();
   targetCtx.setLineDash([]);
 
-  const leftHip = pts.left_hip;
-  const rightHip = pts.right_hip;
-  if (!leftHip || !rightHip) {
-    updateAngleDisplay(NaN);
-    return;
-  }
-
-  const hipMidpoint = {
-    x: (leftHip.x + rightHip.x) / 2,
-    y: (leftHip.y + rightHip.y) / 2
+  const hipMid = {
+    x:(leftHip.x+rightHip.x)/2,
+    y:(leftHip.y+rightHip.y)/2
   };
 
-  const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
+  const referenceTop = {x:ankleMid.x, y:bounds.offsetY};
+  const alignmentAngle = calculateAngle(referenceTop, ankleMid, hipMid);
   updateAngleDisplay(alignmentAngle);
 }
 
-function seekVideo(timeSec) {
-  return new Promise(resolve => {
-    const onSeeked = () => {
-      video.removeEventListener("seeked", onSeeked);
-      resolve();
-    };
-    video.addEventListener("seeked", onSeeked);
-    video.currentTime = timeSec;
-  });
-}
+function getRenderBounds(){
+  const vw=video.videoWidth, vh=video.videoHeight;
+  const ew=video.clientWidth, eh=video.clientHeight;
+  const va=vw/vh, ea=ew/eh;
+  let rw,rh,ox=0,oy=0;
 
-function fillMissingValues(values) {
-  const out = [...values];
-  let firstValid = out.findIndex(v => Number.isFinite(v));
-  if (firstValid === -1) return null;
-
-  for (let i = 0; i < firstValid; i++) out[i] = out[firstValid];
-
-  let lastValid = firstValid;
-  for (let i = firstValid + 1; i < out.length; i++) {
-    if (Number.isFinite(out[i])) {
-      const gap = i - lastValid;
-      const start = out[lastValid];
-      const end = out[i];
-      for (let j = 1; j < gap; j++) {
-        out[lastValid + j] = start + (end - start) * (j / gap);
-      }
-      lastValid = i;
-    }
-  }
-
-  if (leftAnkle && rightAnkle) {
-    const ankleMidpoint = {
-      x: (leftAnkle.x + rightAnkle.x) / 2,
-      y: (leftAnkle.y + rightAnkle.y) / 2
-    };
-
-    const referenceTop = {
-      x: ankleMidpoint.x,
-      y: ankleMidpoint.y - 140
-    };
-
-    targetCtx.beginPath();
-    targetCtx.setLineDash([8, 6]);
-    targetCtx.moveTo(ankleMidpoint.x, ankleMidpoint.y);
-    targetCtx.lineTo(referenceTop.x, referenceTop.y);
-    targetCtx.strokeStyle = "#1e78ff";
-    targetCtx.lineWidth = 3;
-    targetCtx.stroke();
-    targetCtx.setLineDash([]);
-
-    const leftHip = pts.left_hip;
-    const rightHip = pts.right_hip;
-
-    if (leftHip && rightHip) {
-      const hipMidpoint = {
-        x: (leftHip.x + rightHip.x) / 2,
-        y: (leftHip.y + rightHip.y) / 2
-      };
-
-      const alignmentAngle = calculateAngle(referenceTop, ankleMidpoint, hipMidpoint);
-      updateAngleDisplay(alignmentAngle);
-    } else {
-      updateAngleDisplay(NaN);
-    }
+  if(va>ea){
+    rw=ew; rh=ew/va;
+    oy=(eh-rh)/2;
   } else {
-    updateAngleDisplay(NaN);
+    rh=eh; rw=eh*va;
+    ox=(ew-rw)/2;
   }
+  return {offsetX:ox, offsetY:oy, renderWidth:rw, renderHeight:rh};
 }
 
-function seekVideo(timeSec) {
-  return new Promise(resolve => {
-    const onSeeked = () => {
-      video.removeEventListener("seeked", onSeeked);
-      resolve();
+function mapToCanvas(framePts,b){
+  const mapped={};
+  Object.entries(framePts).forEach(([n,p])=>{
+    mapped[n]={
+      x:(p.x/video.videoWidth)*b.renderWidth+b.offsetX,
+      y:(p.y/video.videoHeight)*b.renderHeight+b.offsetY
     };
-    video.addEventListener("seeked", onSeeked);
-    video.currentTime = timeSec;
   });
+  return mapped;
 }
 
-function fillMissingValues(values) {
-  const out = [...values];
-  let firstValid = out.findIndex(v => Number.isFinite(v));
-  if (firstValid === -1) return null;
-
-  for (let i = 0; i < firstValid; i++) out[i] = out[firstValid];
-
-  let lastValid = firstValid;
-  for (let i = firstValid + 1; i < out.length; i++) {
-    if (Number.isFinite(out[i])) {
-      const gap = i - lastValid;
-      const start = out[lastValid];
-      const end = out[i];
-      for (let j = 1; j < gap; j++) {
-        out[lastValid + j] = start + (end - start) * (j / gap);
-      }
-      lastValid = i;
-    }
-  }
-
-  for (let i = lastValid + 1; i < out.length; i++) out[i] = out[lastValid];
-  return out;
+function getFrameIndex(time){
+  return Math.min(
+    processedFrames.length-1,
+    Math.max(0,Math.round(time*processedFps))
+  );
 }
 
-function applyIIRBiquad(data, b, a) {
-  const y = new Array(data.length).fill(0);
-  for (let n = 0; n < data.length; n++) {
-    const x0 = data[n];
-    const x1 = n > 0 ? data[n - 1] : data[n];
-    const x2 = n > 1 ? data[n - 2] : data[n];
-    const y1 = n > 0 ? y[n - 1] : data[n];
-    const y2 = n > 1 ? y[n - 2] : data[n];
-    y[n] = b[0] * x0 + b[1] * x1 + b[2] * x2 - a[1] * y1 - a[2] * y2;
-  }
-  return y;
-}
+async function preprocessCurrentVideo(){
+  if(!video.src || !isModelReady) return;
 
-function butterworthZeroLag(values, cutoffHz, fps) {
-  const filled = fillMissingValues(values);
-  if (!filled) return values;
-
-  const omega = Math.tan(Math.PI * cutoffHz / fps);
-  const omega2 = omega * omega;
-  const sqrt2 = Math.SQRT2;
-
-  const a0 = 1 + sqrt2 * omega + omega2;
-  const b = [omega2 / a0, (2 * omega2) / a0, omega2 / a0];
-  const a = [1, (2 * (omega2 - 1)) / a0, (1 - sqrt2 * omega + omega2) / a0];
-
-  const forward = applyIIRBiquad(filled, b, a);
-  const backward = applyIIRBiquad([...forward].reverse(), b, a).reverse();
-  return backward;
-}
-
-function applyZeroLagButterworth(rawFrames) {
-  const frameCount = rawFrames.length;
-  const filteredFrames = Array.from({ length: frameCount }, () => ({}));
-
-  KEYPOINT_NAMES.forEach(name => {
-    const xSeries = rawFrames.map(frame => frame[name]?.x ?? NaN);
-    const ySeries = rawFrames.map(frame => frame[name]?.y ?? NaN);
-
-    const fx = butterworthZeroLag(xSeries, 4, processedFps);
-    const fy = butterworthZeroLag(ySeries, 4, processedFps);
-
-    for (let i = 0; i < frameCount; i++) {
-      if (Number.isFinite(fx[i]) && Number.isFinite(fy[i])) {
-        filteredFrames[i][name] = { x: fx[i], y: fy[i] };
-      }
-    }
-  });
-
-  return filteredFrames;
-}
-
-async function preprocessCurrentVideo() {
-  if (!video.src || isProcessing || !isModelReady || !detector) return;
-
-  isProcessing = true;
-  processedFrames = [];
-  exportBtn.disabled = true;
-  updateAngleDisplay(NaN);
+  isProcessing=true;
+  processedFrames=[];
+  exportBtn.disabled=true;
 
   video.pause();
-  const duration = video.duration;
-  const frameCount = Math.max(1, Math.ceil(duration * processedFps));
+  const frameCount=Math.ceil(video.duration*processedFps);
 
-  processingStatus.innerText = `Processing video (0/${frameCount})...`;
+  for(let i=0;i<frameCount;i++){
+    const t=i/processedFps;
+    await seekVideo(t);
 
-  const rawFrames = [];
-  for (let i = 0; i < frameCount; i++) {
-    const targetTime = Math.min(i / processedFps, Math.max(0, duration - (1 / processedFps)));
-    await seekVideo(targetTime);
-
-    const poses = await detector.estimatePoses(video);
-    const frame = {};
-    if (poses.length) {
-      poses[0].keypoints.forEach(p => {
-        if (p.score > 0.4) {
-          frame[p.name] = { x: p.x, y: p.y };
-        }
+    const poses=await detector.estimatePoses(video);
+    const frame={};
+    if(poses.length){
+      poses[0].keypoints.forEach(p=>{
+        if(p.score>0.4)
+          frame[p.name]={x:p.x,y:p.y};
       });
     }
-    rawFrames.push(frame);
-
-
-  const forward = applyIIRBiquad(filled, b, a);
-  const backward = applyIIRBiquad([...forward].reverse(), b, a).reverse();
-  return backward;
-}
-
-function applyZeroLagButterworth(rawFrames) {
-  const frameCount = rawFrames.length;
-  const filteredFrames = Array.from({ length: frameCount }, () => ({}));
-
-  KEYPOINT_NAMES.forEach(name => {
-    const xSeries = rawFrames.map(frame => frame[name]?.x ?? NaN);
-    const ySeries = rawFrames.map(frame => frame[name]?.y ?? NaN);
-
-    const fx = butterworthZeroLag(xSeries, 4, processedFps);
-    const fy = butterworthZeroLag(ySeries, 4, processedFps);
-
-    for (let i = 0; i < frameCount; i++) {
-      if (Number.isFinite(fx[i]) && Number.isFinite(fy[i])) {
-        filteredFrames[i][name] = { x: fx[i], y: fy[i] };
-      }
-    }
-  });
-
-  return filteredFrames;
-}
-
-async function preprocessCurrentVideo() {
-  if (!video.src || isProcessing) return;
-
-  isProcessing = true;
-  processedFrames = [];
-  exportBtn.disabled = true;
-  updateAngleDisplay(NaN);
-
-  video.pause();
-  const duration = video.duration;
-  const frameCount = Math.max(1, Math.ceil(duration * processedFps));
-
-  processingStatus.innerText = `Processing video (0/${frameCount})...`;
-
-  const rawFrames = [];
-  for (let i = 0; i < frameCount; i++) {
-    const targetTime = Math.min(i / processedFps, Math.max(0, duration - (1 / processedFps)));
-    await seekVideo(targetTime);
-
-    const poses = await detector.estimatePoses(video);
-    const frame = {};
-    if (poses.length) {
-      poses[0].keypoints.forEach(p => {
-        if (p.score > 0.4) {
-          frame[p.name] = { x: p.x, y: p.y };
-        }
-      });
-    }
-    rawFrames.push(frame);
-
-    if (i % 10 === 0 || i === frameCount - 1) {
-      processingStatus.innerText = `Processing video (${i + 1}/${frameCount})...`;
-    }
+    processedFrames.push(frame);
+    processingStatus.innerText=`Processing ${i+1}/${frameCount}`;
   }
-
-  processingStatus.innerText = "Applying zero-lag Butterworth filter...";
-  processedFrames = applyZeroLagButterworth(rawFrames);
 
   await seekVideo(0);
-  ctx.clearRect(0,0,overlay.width,overlay.height);
-  drawOverlayFromFrame(ctx, processedFrames[0], false);
+  drawOverlayFromFrame(ctx,processedFrames[0],false);
 
-  processingStatus.innerText = `Processing complete (${frameCount} frames).`;
-  exportBtn.disabled = false;
-  isProcessing = false;
+  exportBtn.disabled=false;
+  isProcessing=false;
+  processingStatus.innerText="Processing complete.";
 }
 
-async function viewerLoop() {
-  if(video.paused || video.ended || isProcessing){
-    animationId = null;
-    return;
-  }
-
-  const frame = processedFrames[getFrameIndex(video.currentTime)];
-  ctx.clearRect(0,0,overlay.width,overlay.height);
-  drawOverlayFromFrame(ctx, frame, false);
-
-  animationId = requestAnimationFrame(viewerLoop);
+function seekVideo(t){
+  return new Promise(res=>{
+    video.addEventListener("seeked",res,{once:true});
+    video.currentTime=t;
+  });
 }
 
-video.addEventListener("play", () => {
-  if (!processedFrames.length || isProcessing) {
-    video.pause();
-    return;
-  }
-
+video.addEventListener("play",()=>{
+  if(!processedFrames.length) return video.pause();
   if(!animationId)
-    animationId = requestAnimationFrame(viewerLoop);
+    animationId=requestAnimationFrame(loop);
 });
 
-video.addEventListener("seeked", () => {
-  if(video.paused && processedFrames.length && !isProcessing){
-    const frame = processedFrames[getFrameIndex(video.currentTime)];
-    ctx.clearRect(0,0,overlay.width,overlay.height);
-    drawOverlayFromFrame(ctx, frame, false);
-  }
-});
+async function loop(){
+  if(video.paused||video.ended) return;
+  const frame=processedFrames[getFrameIndex(video.currentTime)];
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  drawOverlayFromFrame(ctx,frame,false);
+  animationId=requestAnimationFrame(loop);
+}
 
-video.addEventListener("loadedmetadata", () => {
-  overlay.width = video.clientWidth;
-  overlay.height = video.clientHeight;
-});
-
-videoUpload.addEventListener("change", async e => {
-document.getElementById("videoUpload").addEventListener("change", async e => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-
-  processedFrames = [];
-  processingStatus.innerText = "Loading video...";
-  video.src = URL.createObjectURL(file);
-
-  await new Promise(resolve => video.addEventListener("loadedmetadata", resolve, { once: true }));
-  overlay.width = video.clientWidth;
-  overlay.height = video.clientHeight;
+videoUpload.addEventListener("change",async e=>{
+  const file=e.target.files[0];
+  if(!file) return;
+  video.src=URL.createObjectURL(file);
+  await new Promise(r=>video.addEventListener("loadedmetadata",r,{once:true}));
+  overlay.width=video.clientWidth;
+  overlay.height=video.clientHeight;
   await preprocessCurrentVideo();
-});
-
-exportBtn.addEventListener("click", async () => {
-  if(!video.src || isExporting || isProcessing || !processedFrames.length) return;
-
-  isExporting = true;
-  exportBtn.disabled = true;
-  exportBtn.innerText = "Downloading...";
-
-  const exportCanvas = document.createElement("canvas");
-  exportCanvas.width = video.videoWidth;
-  exportCanvas.height = video.videoHeight;
-  const exportCtx = exportCanvas.getContext("2d");
-
-  const stream = exportCanvas.captureStream(processedFps);
-  const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
-  const chunks = [];
-
-  recorder.ondataavailable = e => {
-    if(e.data.size>0) chunks.push(e.data);
-  };
-
-  recorder.onstop = () => {
-    const blob = new Blob(chunks,{type:"video/webm"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "annotated_video.webm";
-    a.click();
-
-    exportBtn.innerText = "Done ✔";
-    setTimeout(() => {
-      exportBtn.innerText = "Download Annotated Video";
-      exportBtn.disabled = false;
-      isExporting = false;
-    }, 2000);
-  };
-
-  recorder.start();
-
-  for (let i = 0; i < processedFrames.length; i++) {
-    const targetTime = Math.min(i / processedFps, Math.max(0, video.duration - (1 / processedFps)));
-    await seekVideo(targetTime);
-
-    exportCtx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
-    exportCtx.drawImage(video,0,0);
-    drawOverlayFromFrame(exportCtx, processedFrames[i], true);
-    await new Promise(resolve => setTimeout(resolve, 1000 / processedFps));
-  }
-
-  recorder.stop();
 });
 
 loadModel();
