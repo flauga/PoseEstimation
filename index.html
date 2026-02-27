@@ -353,6 +353,18 @@ function getFrameIndex(time){
   );
 }
 
+function renderCurrentProcessedFrame(){
+  if(!processedFrames.length) {
+    ctx.clearRect(0,0,overlay.width,overlay.height);
+    updateAngleDisplay(NaN);
+    return;
+  }
+
+  const frame=processedFrames[getFrameIndex(video.currentTime)];
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  drawOverlayFromFrame(ctx,frame,false);
+}
+
 async function preprocessCurrentVideo(){
   if(!video.src || !isModelReady) return;
 
@@ -400,11 +412,31 @@ video.addEventListener("play",()=>{
     animationId=requestAnimationFrame(loop);
 });
 
+video.addEventListener("seeking",()=>{
+  renderCurrentProcessedFrame();
+});
+
+video.addEventListener("seeked",()=>{
+  renderCurrentProcessedFrame();
+  if(!video.paused && !video.ended && !animationId)
+    animationId=requestAnimationFrame(loop);
+});
+
+video.addEventListener("pause",()=>{
+  animationId=null;
+});
+
+video.addEventListener("ended",()=>{
+  animationId=null;
+});
+
 async function loop(){
-  if(video.paused||video.ended) return;
-  const frame=processedFrames[getFrameIndex(video.currentTime)];
-  ctx.clearRect(0,0,overlay.width,overlay.height);
-  drawOverlayFromFrame(ctx,frame,false);
+  if(video.paused||video.ended) {
+    animationId=null;
+    return;
+  }
+
+  renderCurrentProcessedFrame();
   animationId=requestAnimationFrame(loop);
 }
 
