@@ -401,7 +401,10 @@ video.addEventListener("play",()=>{
 });
 
 async function loop(){
-  if(video.paused||video.ended) return;
+  if(video.paused||video.ended){
+    animationId=null;
+    return;
+  }
   const frame=processedFrames[getFrameIndex(video.currentTime)];
   ctx.clearRect(0,0,overlay.width,overlay.height);
   drawOverlayFromFrame(ctx,frame,false);
