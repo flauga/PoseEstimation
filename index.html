@@ -365,6 +365,18 @@ function renderCurrentProcessedFrame(){
   drawOverlayFromFrame(ctx,frame,false);
 }
 
+function startAnimationLoop(){
+  if(!animationId)
+    animationId=requestAnimationFrame(loop);
+}
+
+function stopAnimationLoop(){
+  if(animationId){
+    cancelAnimationFrame(animationId);
+    animationId=null;
+  }
+}
+
 async function preprocessCurrentVideo(){
   if(!video.src || !isModelReady) return;
 
@@ -408,31 +420,31 @@ function seekVideo(t){
 
 video.addEventListener("play",()=>{
   if(!processedFrames.length) return video.pause();
-  if(!animationId)
-    animationId=requestAnimationFrame(loop);
+  startAnimationLoop();
 });
 
 video.addEventListener("seeking",()=>{
+  stopAnimationLoop();
   renderCurrentProcessedFrame();
 });
 
 video.addEventListener("seeked",()=>{
   renderCurrentProcessedFrame();
-  if(!video.paused && !video.ended && !animationId)
-    animationId=requestAnimationFrame(loop);
+  if(!video.paused && !video.ended)
+    startAnimationLoop();
 });
 
 video.addEventListener("pause",()=>{
-  animationId=null;
+  stopAnimationLoop();
 });
 
 video.addEventListener("ended",()=>{
-  animationId=null;
+  stopAnimationLoop();
 });
 
 async function loop(){
   if(video.paused||video.ended) {
-    animationId=null;
+    stopAnimationLoop();
     return;
   }
 
