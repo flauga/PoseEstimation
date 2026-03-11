@@ -1,0 +1,181 @@
+/* ===== BioMotion Lab - Charts & Graphs ===== */
+
+/* Master timeline */
+.master-timeline {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding: var(--space-md) var(--space-lg);
+  margin-bottom: var(--space-lg);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.master-timeline__label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.master-timeline__slider {
+  flex: 1;
+  height: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--card-border);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.master-timeline__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 180, 216, 0.4);
+  transition: transform var(--transition-fast);
+}
+
+.master-timeline__slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.master-timeline__time {
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  min-width: 100px;
+  text-align: right;
+}
+
+/* Chart grid */
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-lg);
+}
+
+@media (max-width: 1200px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Individual chart card */
+.chart-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+.chart-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-md) 0;
+}
+
+.chart-card__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.chart-card__legend {
+  display: flex;
+  gap: var(--space-md);
+  font-size: var(--text-xs);
+}
+
+.chart-card__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.chart-card__legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.chart-card__legend-dot.left { background: var(--color-left); }
+.chart-card__legend-dot.right { background: var(--color-right); }
+
+.chart-card__canvas-wrap {
+  padding: var(--space-sm) var(--space-md);
+  height: 220px;
+}
+
+.chart-card__canvas-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Stats row below chart */
+.chart-card__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--card-border);
+  border-top: 1px solid var(--card-border);
+}
+
+.chart-card__stat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card-bg);
+  font-size: var(--text-xs);
+}
+
+.chart-card__stat-side {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-width: 36px;
+}
+
+.chart-card__stat-side.left { color: var(--color-left); }
+.chart-card__stat-side.right { color: var(--color-right); }
+
+.chart-card__stat-values {
+  display: flex;
+  gap: var(--space-md);
+  color: var(--text-secondary);
+}
+
+.chart-card__stat-item {
+  white-space: nowrap;
+}
+
+.chart-card__stat-item strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+/* Asymmetry row */
+.chart-card__asymmetry {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card-bg);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.chart-card__asymmetry strong {
+  font-family: var(--font-mono);
+}

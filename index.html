@@ -1,366 +1,462 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Biomechanics Pose Tool</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BioMotion Lab – Functional Movement Assessment</title>
 
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/layout.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/charts.css" />
+  <link rel="stylesheet" href="css/report.css" />
+
+  <style>
+    /* Initial state overrides */
+    #videoContainer { display: none; }
+    #videoControls  { display: none; }
+    #overlay        { width: 100%; height: 100%; }
+
+    /* Scrollable tab content */
+    .tab-content { overflow-y: auto; overflow-x: hidden; }
+
+    /* Angle panel scrollable */
+    .angle-panel { overflow-y: auto; }
+
+    /* Smooth chart transitions */
+    .charts-grid { animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    /* AI card list formatting */
+    .ai-card__content ul { margin: 8px 0 8px 20px; }
+    .ai-card__content ol { margin: 8px 0 8px 20px; }
+    .ai-card__content li { margin-bottom: 5px; line-height: 1.6; }
+    .ai-card__content p  { margin-bottom: 8px; }
+
+    /* Video canvas stack */
+    #videoContainer { overflow: hidden; }
+    #video { display: block; width: 100%; max-height: 62vh; object-fit: contain; background: #000; }
+    #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+    /* Quality score gradient text fallback */
+    .quality-score__value { color: var(--color-primary); }
+
+    /* Sidebar bottom margin */
+    .sidebar { padding-bottom: 20px; }
+
+    /* Tab pane height */
+    .tab-pane.active { min-height: calc(100vh - var(--header-height) - 46px); }
+
+    /* Report table */
+    .metrics-table { border: 1px solid var(--card-border); border-radius: 8px; overflow: hidden; }
+    .metrics-table th:first-child { border-radius: 8px 0 0 0; }
+    .metrics-table th:last-child  { border-radius: 0 8px 0 0; }
+
+    /* Spinner centre */
+    #aiLoading .spinner { display: block; margin: 0 auto 12px; }
+
+    /* Upload zone dragover highlight */
+    .upload-zone.dragover {
+      border-color: var(--color-primary);
+      background: rgba(0,180,216,0.08);
+    }
+  </style>
+
+  <!-- TensorFlow -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
 
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      background: #f4f6f8;
-    }
-
-    header {
-      padding: 20px 40px;
-      background: white;
-      border-bottom: 1px solid #ddd;
-      font-size: 22px;
-      font-weight: 600;
-    }
-
-    .upload-section {
-      padding: 20px 40px;
-      background: white;
-      border-bottom: 1px solid #eee;
-      display: flex;
-      gap: 20px;
-      align-items: center;
-    }
-
-    button {
-      padding: 8px 14px;
-      border-radius: 6px;
-      border: none;
-      cursor: pointer;
-      background: #0077ff;
-      color: white;
-      font-weight: 500;
-      min-width: 180px;
-    }
-
-    button:disabled {
-      background: #999;
-      cursor: not-allowed;
-    }
-
-    .container {
-      display: flex;
-      justify-content: center;
-      padding: 30px;
-    }
-
-    .video-wrapper {
-      position: relative;
-      max-width: 700px;
-      width: 100%;
-    }
-
-    video {
-      width: 100%;
-      max-height: 75vh;
-      border-radius: 8px;
-    }
-
-    canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-    }
-
-    /* MODEL LOADING OVERLAY */
-    #loadingOverlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(255,255,255,0.95);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      z-index: 9999;
-      transition: opacity 0.4s ease;
-    }
-
-    .spinner {
-      width: 50px;
-      height: 50px;
-      border: 5px solid #ddd;
-      border-top: 5px solid #0077ff;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-bottom: 20px;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-  </style>
+  <!-- jsPDF + html2canvas -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 
 <body>
 
-<div id="loadingOverlay">
+<!-- ======================================================
+     LOADING OVERLAY
+====================================================== -->
+<div class="loading-overlay" id="loadingOverlay">
   <div class="spinner"></div>
-  <div id="loadingText">Loading model...</div>
+  <div class="loading-overlay__text" id="loadingText">Loading MoveNet Thunder…</div>
 </div>
 
-<header>Biomechanics Pose Tool</header>
+<!-- ======================================================
+     APP SHELL
+====================================================== -->
+<div class="app">
 
-<div class="upload-section">
-  <input type="file" id="videoUpload" accept="video/*" />
-  <button id="exportBtn">Download Annotated Video</button>
-</div>
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="header__brand">
+      <div class="header__brand-icon">BM</div>
+      <span>BioMotion Lab</span>
+    </div>
 
-<div class="container">
-  <div class="video-wrapper">
-    <video id="video" controls></video>
-    <canvas id="overlay"></canvas>
-  </div>
-</div>
+    <div class="header__session">
+      <input type="text" id="patientName" placeholder="Patient name…" />
+      <select id="assessmentType">
+        <option value="squat">Bodyweight Squat</option>
+        <option value="single_squat">Single Leg Squat</option>
+        <option value="overhead_squat">Overhead Squat</option>
+        <option value="lunge">Lunge</option>
+        <option value="overhead_reach">Overhead Reach</option>
+        <option value="gait">Gait Analysis</option>
+        <option value="custom">Custom Movement</option>
+      </select>
+    </div>
 
-<script>
+    <div class="header__controls">
+      <div class="view-toggle">
+        <button class="view-toggle__btn active" data-mode="sagittal" id="btnSagittal">
+          ↔ Sagittal
+        </button>
+        <button class="view-toggle__btn" data-mode="frontal" id="btnFrontal">
+          ↕ Frontal
+        </button>
+      </div>
+    </div>
+  </header>
 
-let detector;
-let animationId = null;
-let isExporting = false;
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="sidebar">
 
-const video = document.getElementById("video");
-const overlay = document.getElementById("overlay");
-const ctx = overlay.getContext("2d");
-const exportBtn = document.getElementById("exportBtn");
+    <!-- Upload -->
+    <div class="sidebar__section">
+      <div class="sidebar__section-title">Upload Video</div>
+      <div class="upload-zone" id="uploadZone">
+        <div class="upload-zone__icon">🎬</div>
+        <div class="upload-zone__text">
+          <strong>Click or drag</strong> a video file
+        </div>
+        <input type="file" id="videoUpload" accept="video/*" />
+      </div>
+    </div>
 
-const loadingOverlay = document.getElementById("loadingOverlay");
-const loadingText = document.getElementById("loadingText");
+    <!-- Navigation -->
+    <div class="sidebar__section sidebar__nav-section">
+      <ul class="sidebar__nav" id="mainNav">
+        <li class="sidebar__nav-item active" data-tab="assessment">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/><path d="M20.188 10.934c.388.812.612 1.72.612 2.566C20.8 16.8 16.84 20 12 20s-8.8-3.2-8.8-6.5c0-.846.224-1.754.612-2.566M12 4v8"/>
+          </svg>
+          <span>Assessment</span>
+        </li>
+        <li class="sidebar__nav-item" data-tab="graphs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          <span>Graphs</span>
+        </li>
+        <li class="sidebar__nav-item" data-tab="report">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+          </svg>
+          <span>Report</span>
+        </li>
+        <li class="sidebar__nav-item" data-tab="ai">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><circle cx="18" cy="6" r="4"/><path d="M16 6h4M18 4v4"/>
+          </svg>
+          <span>AI Analysis</span>
+        </li>
+      </ul>
+    </div>
 
-// Skeleton
-const skeleton = [
-  ["left_shoulder","left_elbow"],
-  ["left_elbow","left_wrist"],
-  ["right_shoulder","right_elbow"],
-  ["right_elbow","right_wrist"],
-  ["left_shoulder","right_shoulder"],
-  ["left_shoulder","left_hip"],
-  ["right_shoulder","right_hip"],
-  ["left_hip","right_hip"],
-  ["left_hip","left_knee"],
-  ["left_knee","left_ankle"],
-  ["right_hip","right_knee"],
-  ["right_knee","right_ankle"]
-];
+    <!-- Smoothing controls -->
+    <div class="sidebar__section">
+      <div class="sidebar__section-title">Smoothing</div>
+      <div class="sidebar__control">
+        <span class="sidebar__control-label">Enable Smoothing</span>
+        <label class="toggle">
+          <input type="checkbox" id="smoothingToggle" checked />
+          <div class="toggle__track"></div>
+          <div class="toggle__thumb"></div>
+        </label>
+      </div>
+      <div class="sidebar__control" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+        <span class="sidebar__control-label">Strength: <span id="smoothStrengthLabel">Medium</span></span>
+        <input type="range" class="sidebar__slider" id="smoothStrength" min="1" max="5" value="3" />
+      </div>
+    </div>
 
-async function loadModel() {
+    <!-- Export / Actions -->
+    <div class="sidebar__section">
+      <div class="sidebar__section-title">Actions</div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button class="sidebar__btn sidebar__btn--primary" id="analyzeBtn" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 3l14 9-14 9V3z"/></svg>
+          <span>Analyze Video</span>
+        </button>
+        <button class="sidebar__btn sidebar__btn--outline" id="exportVideoBtn" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Export Video</span>
+        </button>
+        <button class="sidebar__btn sidebar__btn--outline" id="exportDataBtn" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Export JSON</span>
+        </button>
+        <button class="sidebar__btn sidebar__btn--outline" id="resetBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+          <span>New Session</span>
+        </button>
+      </div>
+    </div>
 
-  loadingText.innerText = "Loading MoveNet Thunder...";
+    <!-- Analysis progress -->
+    <div class="sidebar__section" id="progressSection" style="display:none;">
+      <div class="sidebar__section-title">Processing</div>
+      <div class="progress-bar" style="margin-bottom: 8px;">
+        <div class="progress-bar__fill" id="analysisProgress" style="width: 0%"></div>
+      </div>
+      <div style="font-size: 12px; color: var(--sidebar-text); margin-bottom: 10px;" id="progressLabel">
+        Analysing frames…
+      </div>
+      <button class="sidebar__btn sidebar__btn--outline" id="stopAnalysisBtn" style="border-color: rgba(252,129,129,0.5); color: #FC8181;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        <span>Stop Analysis</span>
+      </button>
+    </div>
 
-  detector = await poseDetection.createDetector(
-    poseDetection.SupportedModels.MoveNet,
-    { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
-  );
+  </aside>
 
-  loadingText.innerText = "Model Ready ✔";
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main">
 
-  setTimeout(()=>{
-    loadingOverlay.style.opacity = 0;
-    setTimeout(()=>{
-      loadingOverlay.style.display = "none";
-    }, 400);
-  }, 800);
+    <!-- Tab Bar -->
+    <nav class="tab-bar" id="tabBar">
+      <div class="tab-bar__item active" data-tab="assessment">Assessment</div>
+      <div class="tab-bar__item" data-tab="graphs">Graphs</div>
+      <div class="tab-bar__item" data-tab="report">Report</div>
+      <div class="tab-bar__item" data-tab="ai">AI Analysis</div>
+    </nav>
 
-  console.log("Model Loaded ✔");
-}
+    <!-- ===========================
+         TAB: Assessment
+    =========================== -->
+    <div class="tab-content">
 
-function calculateAngle(A,B,C) {
-  const BA = {x:A.x-B.x, y:A.y-B.y};
-  const BC = {x:C.x-B.x, y:C.y-B.y};
-  const dot = BA.x*BC.x + BA.y*BC.y;
-  const magBA = Math.hypot(BA.x,BA.y);
-  const magBC = Math.hypot(BC.x,BC.y);
-  if(magBA===0 || magBC===0) return 0;
-  const cos = dot/(magBA*magBC);
-  return Math.acos(Math.min(1,Math.max(-1,cos))) * 180/Math.PI;
-}
+      <div class="tab-pane active" id="tab-assessment">
+        <div class="assessment-layout">
 
-async function drawOverlay(targetCtx, fullResolution=false) {
+          <!-- Video Column -->
+          <div>
+            <div class="video-container" id="videoContainer">
+              <video id="video" playsinline></video>
+              <canvas id="overlay"></canvas>
+            </div>
 
-  const poses = await detector.estimatePoses(video);
-  if (!poses.length) return;
+            <!-- Video Controls -->
+            <div class="video-controls" id="videoControls">
+              <button class="video-controls__btn" id="playPauseBtn" title="Play/Pause (Space)">▶</button>
+              <button class="video-controls__btn" id="stepBackBtn" title="Step Back (←)">⏮</button>
+              <button class="video-controls__btn" id="stepFwdBtn" title="Step Forward (→)">⏭</button>
+              <input type="range" class="video-controls__timeline" id="videoTimeline" min="0" max="100" value="0" step="0.01" />
+              <span class="video-controls__time" id="videoTimeDisplay">0:00 / 0:00</span>
+              <select class="video-controls__speed" id="playbackSpeed">
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select>
+            </div>
 
-  const pts = {};
+            <!-- No video placeholder -->
+            <div class="empty-state" id="noVideoState" style="margin-top: 40px;">
+              <div class="empty-state__icon">🎬</div>
+              <div class="empty-state__title">No video loaded</div>
+              <div class="empty-state__desc">Upload a video from the sidebar to begin your functional movement assessment.</div>
+            </div>
+          </div>
 
-  if (fullResolution) {
-    // EXPORT MODE (no scaling needed)
-    poses[0].keypoints.forEach(p=>{
-      if(p.score > 0.4){
-        pts[p.name] = { x: p.x, y: p.y };
-      }
-    });
-  } else {
-    // VIEWER MODE (handle portrait letterboxing properly)
+          <!-- Angle Panel Column -->
+          <div>
+            <!-- Quality Score (shown after analysis) -->
+            <div class="quality-score" id="qualityScoreCard" style="display:none; margin-bottom: 16px;">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px;">Movement Quality Score</div>
+              <div class="quality-score__value" id="qualityScoreValue">–</div>
+              <div class="quality-score__label">out of 100</div>
+              <div class="quality-score__breakdown">
+                <div class="quality-score__item">
+                  <div class="quality-score__item-value" id="romScore">–</div>
+                  <div class="quality-score__item-label">ROM</div>
+                </div>
+                <div class="quality-score__item">
+                  <div class="quality-score__item-value" id="symScore">–</div>
+                  <div class="quality-score__item-label">Symmetry</div>
+                </div>
+                <div class="quality-score__item">
+                  <div class="quality-score__item-value" id="smoothScore">–</div>
+                  <div class="quality-score__item-label">Smoothness</div>
+                </div>
+              </div>
+            </div>
 
-    const videoWidth = video.videoWidth;
-    const videoHeight = video.videoHeight;
+            <!-- Angle cards container -->
+            <div class="angle-panel" id="anglePanel">
+              <!-- Populated dynamically by view-mode.js -->
+              <div class="empty-state" id="anglePanelEmpty" style="padding: 40px 20px;">
+                <div class="empty-state__icon">📐</div>
+                <div class="empty-state__title">Awaiting video</div>
+                <div class="empty-state__desc">Joint angles will appear here during playback.</div>
+              </div>
+            </div>
 
-    const elementWidth = video.clientWidth;
-    const elementHeight = video.clientHeight;
+            <!-- Asymmetry summary (shown after analysis) -->
+            <div class="asymmetry-card" id="asymmetryCard" style="display:none; margin-top: 16px;">
+              <div class="asymmetry-card__title">Asymmetry Analysis</div>
+              <div id="asymmetryRows"><!-- populated by metrics-engine --></div>
+            </div>
+          </div>
 
-    const videoAspect = videoWidth / videoHeight;
-    const elementAspect = elementWidth / elementHeight;
+        </div>
+      </div>
 
-    let renderWidth, renderHeight;
-    let offsetX = 0, offsetY = 0;
+      <!-- ===========================
+           TAB: Graphs
+      =========================== -->
+      <div class="tab-pane" id="tab-graphs">
+        <div id="graphsEmpty" class="empty-state" style="padding: 80px;">
+          <div class="empty-state__icon">📈</div>
+          <div class="empty-state__title">No data yet</div>
+          <div class="empty-state__desc">Upload and play through a video (or press "Analyze Video") to populate interactive angle graphs.</div>
+        </div>
 
-    if (videoAspect > elementAspect) {
-      // Letterbox top/bottom
-      renderWidth = elementWidth;
-      renderHeight = elementWidth / videoAspect;
-      offsetY = (elementHeight - renderHeight) / 2;
-    } else {
-      // Letterbox left/right
-      renderHeight = elementHeight;
-      renderWidth = elementHeight * videoAspect;
-      offsetX = (elementWidth - renderWidth) / 2;
-    }
+        <div id="graphsContent" style="display:none;">
+          <!-- Master timeline -->
+          <div class="master-timeline">
+            <span class="master-timeline__label">Timeline</span>
+            <input type="range" class="master-timeline__slider" id="masterSlider" min="0" max="100" value="0" step="0.001" />
+            <span class="master-timeline__time" id="masterTimeDisplay">0.000s / 0.000s</span>
+          </div>
 
-    poses[0].keypoints.forEach(p=>{
-      if(p.score > 0.4){
+          <!-- Chart grid -->
+          <div class="charts-grid" id="chartsGrid">
+            <!-- Populated dynamically by chart-manager.js -->
+          </div>
+        </div>
+      </div>
 
-        const x =
-          (p.x / videoWidth) * renderWidth + offsetX;
+      <!-- ===========================
+           TAB: Report
+      =========================== -->
+      <div class="tab-pane" id="tab-report">
+        <div class="report-preview">
 
-        const y =
-          (p.y / videoHeight) * renderHeight + offsetY;
+          <!-- Patient Form -->
+          <div class="report-section">
+            <div class="report-section__title">Session Information</div>
+            <div class="patient-form">
+              <div class="form-group">
+                <label>Patient Name</label>
+                <input type="text" id="reportPatientName" placeholder="Full name" />
+              </div>
+              <div class="form-group">
+                <label>Age</label>
+                <input type="number" id="reportAge" placeholder="Years" min="5" max="99" />
+              </div>
+              <div class="form-group">
+                <label>Gender</label>
+                <select id="reportGender">
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Assessment Date</label>
+                <input type="date" id="reportDate" />
+              </div>
+              <div class="form-group">
+                <label>Clinician</label>
+                <input type="text" id="reportClinician" placeholder="Name" />
+              </div>
+              <div class="form-group">
+                <label>Notes</label>
+                <input type="text" id="reportNotes" placeholder="Optional notes" />
+              </div>
+            </div>
 
-        pts[p.name] = { x, y };
-      }
-    });
-  }
+            <div class="report-actions">
+              <button class="btn btn--primary btn--lg" id="generatePdfBtn" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Generate PDF Report
+              </button>
+              <button class="btn btn--outline" id="printReportBtn" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                Print
+              </button>
+            </div>
+          </div>
 
-  // Skeleton
-  skeleton.forEach(([a,b])=>{
-    if(pts[a] && pts[b]){
-      targetCtx.beginPath();
-      targetCtx.moveTo(pts[a].x,pts[a].y);
-      targetCtx.lineTo(pts[b].x,pts[b].y);
-      targetCtx.strokeStyle="lime";
-      targetCtx.lineWidth=3;
-      targetCtx.stroke();
-    }
-  });
+          <!-- Report preview (populated dynamically) -->
+          <div id="reportPreviewContent">
+            <div class="empty-state" style="padding: 60px;">
+              <div class="empty-state__icon">📄</div>
+              <div class="empty-state__title">Report will appear here</div>
+              <div class="empty-state__desc">Complete an analysis to generate your movement assessment report.</div>
+            </div>
+          </div>
 
-  // Joints
-  Object.values(pts).forEach(p=>{
-    targetCtx.beginPath();
-    targetCtx.arc(p.x,p.y,5,0,2*Math.PI);
-    targetCtx.fillStyle="red";
-    targetCtx.fill();
-  });
-}
+        </div>
+      </div>
 
+      <!-- ===========================
+           TAB: AI Analysis
+      =========================== -->
+      <div class="tab-pane" id="tab-ai">
+        <div style="max-width: 800px;">
 
-// Real-time loop
-async function viewerLoop() {
+          <div class="report-section">
+            <div class="report-section__title">AI Biomechanical Assessment</div>
+            <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.7;">
+              Enter your Anthropic API key to enable AI-powered biomechanical analysis. Claude will analyse your movement data and identify compensatory patterns, asymmetries, and risk factors. Your API key is stored locally in your browser only.
+            </p>
 
-  if(video.paused || video.ended){
-    animationId = null;
-    return;
-  }
+            <div class="api-key-section">
+              <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-…" />
+              <button class="btn btn--primary" id="saveApiKeyBtn">Save Key</button>
+              <button class="btn btn--outline" id="clearApiKeyBtn">Clear</button>
+            </div>
+            <div id="apiKeyStatus" style="font-size: 12px; color: var(--text-muted); margin-bottom: 20px;"></div>
 
-  ctx.clearRect(0,0,overlay.width,overlay.height);
-  await drawOverlay(ctx,false);
+            <button class="btn btn--primary btn--lg" id="runAiBtn" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              Analyse Movement with AI
+            </button>
 
-  animationId = requestAnimationFrame(viewerLoop);
-}
+            <div id="aiLoading" style="display:none; margin-top: 20px; text-align: center;">
+              <div class="spinner" style="margin: 0 auto 12px;"></div>
+              <div style="font-size: 14px; color: var(--text-secondary);">Claude is analysing your movement data…</div>
+            </div>
+          </div>
 
-video.addEventListener("play", ()=>{
-  if(!animationId)
-    animationId = requestAnimationFrame(viewerLoop);
-});
+          <div class="ai-results" id="aiResults" style="display:none;">
+            <!-- Populated by ai-assessment.js -->
+          </div>
 
-video.addEventListener("seeked", async ()=>{
-  if(video.paused){
-    ctx.clearRect(0,0,overlay.width,overlay.height);
-    await drawOverlay(ctx,false);
-  }
-});
+        </div>
+      </div>
 
-video.addEventListener("loadedmetadata",()=>{
-  overlay.width = video.clientWidth;
-  overlay.height = video.clientHeight;
-});
+    </div><!-- /tab-content -->
+  </main>
+</div><!-- /app -->
 
-document.getElementById("videoUpload")
-.addEventListener("change",e=>{
-  video.src = URL.createObjectURL(e.target.files[0]);
-});
-
-// EXPORT LOGIC
-exportBtn.addEventListener("click", async () => {
-
-  if(!video.src || isExporting) return;
-
-  isExporting = true;
-  exportBtn.disabled = true;
-  exportBtn.innerText = "Downloading...";
-
-  const exportCanvas = document.createElement("canvas");
-  exportCanvas.width = video.videoWidth;
-  exportCanvas.height = video.videoHeight;
-  const exportCtx = exportCanvas.getContext("2d");
-
-  const stream = exportCanvas.captureStream(30);
-  const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
-
-  const chunks = [];
-
-  recorder.ondataavailable = e=>{
-    if(e.data.size>0) chunks.push(e.data);
-  };
-
-  recorder.onstop = ()=>{
-    const blob = new Blob(chunks,{type:"video/webm"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "annotated_video.webm";
-    a.click();
-
-    exportBtn.innerText = "Done ✔";
-    setTimeout(()=>{
-      exportBtn.innerText = "Download Annotated Video";
-      exportBtn.disabled = false;
-      isExporting = false;
-    },2000);
-  };
-
-  recorder.start();
-
-  video.currentTime = 0;
-  await video.play();
-
-  const exportLoop = async ()=>{
-
-    if(video.paused || video.ended){
-      recorder.stop();
-      return;
-    }
-
-    exportCtx.drawImage(video,0,0);
-    await drawOverlay(exportCtx,true);
-
-    requestAnimationFrame(exportLoop);
-  };
-
-  exportLoop();
-});
-
-loadModel();
-
-</script>
+<!-- ======================================================
+     JAVASCRIPT MODULES
+====================================================== -->
+<script type="module" src="js/app.js"></script>
 
 </body>
 </html>
